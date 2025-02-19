@@ -39,3 +39,5 @@ FEEDS = {
         "overwrite": True,
     },
 }
+
+FEED_EXPORT_INDENT = 4
