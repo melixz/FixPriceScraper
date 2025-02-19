@@ -2,6 +2,7 @@ import scrapy
 import json
 from scrapy.http import Response
 from datetime import datetime, timezone
+from fix_price_scraper.items import FixPriceScraperItem
 
 
 class FixPriceSpider(scrapy.Spider):
@@ -54,35 +55,36 @@ class FixPriceSpider(scrapy.Spider):
             return
 
         for item in products:
-            yield {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "RPC": item.get("sku", item.get("id")),
-                "url": f"https://fix-price.com/catalog/{item.get('url')}",
-                "title": item.get("title"),
-                "marketing_tags": [],
-                "brand": item["brand"]["title"] if item.get("brand") else "No Brand",
-                "section": item["category"]["title"]
-                if item.get("category")
-                else "No Category",
-                "price_data": {
-                    "current": float(item["price"]) if item.get("price") else None,
-                    "original": float(item["specialPrice"]["price"])
-                    if item.get("specialPrice")
-                    else None,
-                    "currency": "RUB",
-                },
-                "stock": {"count": item.get("inStock")},
-                "assets": {
-                    "main_image": item["images"][0]["src"]
-                    if item.get("images") and len(item["images"]) > 0
-                    else "",
-                    "additional_images": [
-                        img["src"] for img in item.get("images", [])[1:]
-                    ],
-                },
-                "metadata": {},
-                "variants": [],
+            product = FixPriceScraperItem()
+            product["timestamp"] = datetime.now(timezone.utc).isoformat()
+            product["RPC"] = item.get("sku", item.get("id"))
+            product["url"] = f"https://fix-price.com/catalog/{item.get('url')}"
+            product["title"] = item.get("title")
+            product["marketing_tags"] = []
+            product["brand"] = (
+                item["brand"]["title"] if item.get("brand") else "No Brand"
+            )
+            product["section"] = (
+                item["category"]["title"] if item.get("category") else "No Category"
+            )
+            product["price_data"] = {
+                "current": float(item["price"]) if item.get("price") else None,
+                "original": float(item["specialPrice"]["price"])
+                if item.get("specialPrice")
+                else None,
+                "currency": "RUB",
             }
+            product["stock"] = {"count": item.get("inStock")}
+            product["assets"] = {
+                "main_image": item["images"][0]["src"]
+                if item.get("images") and len(item["images"]) > 0
+                else "",
+                "additional_images": [img["src"] for img in item.get("images", [])[1:]],
+            }
+            product["metadata"] = {}
+            product["variants"] = []
+
+            yield product
 
         current_page = int(response.url.split("page=")[1].split("&")[0])
         next_page = response.url.replace(
