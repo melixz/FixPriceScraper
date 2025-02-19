@@ -1,6 +1,7 @@
 import scrapy
 import json
-from datetime import datetime
+from scrapy.http import Response
+from datetime import datetime, timezone
 
 
 class FixPriceSpider(scrapy.Spider):
@@ -33,7 +34,7 @@ class FixPriceSpider(scrapy.Spider):
                 callback=self.parse,
             )
 
-    def parse(self, response):
+    def parse(self, response: Response, **kwargs):
         if response.status != 200:
             self.logger.error(f"Ошибка {response.status}: {response.text}")
             return
@@ -54,7 +55,7 @@ class FixPriceSpider(scrapy.Spider):
 
         for item in products:
             yield {
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "RPC": item.get("sku", item.get("id")),
                 "url": f"https://fix-price.com/catalog/{item.get('url')}",
                 "title": item.get("title"),
