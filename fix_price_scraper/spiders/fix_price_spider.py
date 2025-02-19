@@ -1,5 +1,6 @@
 import scrapy
 import time
+from urllib.parse import urljoin
 
 
 class FixPriceSpider(scrapy.Spider):
@@ -13,75 +14,117 @@ class FixPriceSpider(scrapy.Spider):
 
     custom_settings = {
         "DOWNLOAD_DELAY": 2,
-        "CONCURRENT_REQUESTS": 10,
-        "FEED_FORMAT": "json",
-        "FEED_URI": "data/products.json",
+        "USER_AGENT": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.67 Safari/537.36",
     }
 
     def parse(self, response):
-        product_links = response.css("a.product-card::attr(href)").getall()
-        for link in product_links:
-            yield response.follow(link, self.parse_product)
+        products = response.css(".product.one-product-in-row")
 
-        next_page = response.css("a.pagination-next::attr(href)").get()
+        if not products:
+            self.logger.warning("Товары не найдены! Проверьте селекторы.")
+
+        for product in products:
+            product_url = urljoin(response.url, product.css(".title::attr(href)").get())
+
+            item = {
+                "timestamp": int(time.time()),
+                "RPC": product.attrib.get("id"),
+                "url": product_url,
+                "title": self.get_title(product),
+                "marketing_tags": self.get_marketing_tags(product),
+                "brand": self.get_brand(product),
+                "section": [
+                    section.strip() for section in response.url.split("/")[3:-1]
+                ],
+                "price_data": self.get_price_data(product),
+                "stock": self.get_stock_info(product),
+                "assets": self.get_assets(product),
+                "metadata": self.get_metadata(response),
+                "variants": self.get_variants(product),
+            }
+
+            yield response.follow(product_url, self.parse_product, meta={"item": item})
+
+        next_page = response.css(".pagination-next a::attr(href)").get()
         if next_page:
             yield response.follow(next_page, self.parse)
 
-    def parse_product(self, response):
-        timestamp = int(time.time())
+    def get_title(self, product):
+        title = product.css(".title::text").get()
+        return title.strip() if title else ""
 
-        title = response.css("h1.product-title::text").get()
-        if title:
-            title = title.strip()
+    def get_marketing_tags(self, product):
+        tags = []
+        sticker_text = product.css(".sticker::text").get()
+        if sticker_text:
+            tags.append(sticker_text.strip())
+        return tags
 
-        price = response.css("span.price__current::text").get()
-        if price:
-            price = float(price.replace("₽", "").strip())
+    def get_brand(self, product):
+        return product.css(".brand::text").get() or ""
+
+    def get_price_data(self, product):
+        price_original = product.css(".price-wrapper .price-block del::text").get()
+        price_current = product.css(".price-wrapper .price-block span::text").get()
+
+        if price_original:
+            price_original = float(price_original.replace("₽", "").strip())
+        if price_current:
+            price_current = float(price_current.replace("₽", "").strip())
         else:
-            price = None
+            price_current = price_original
 
-        original_price = response.css("span.price__original::text").get()
-        if original_price:
-            original_price = float(original_price.replace("₽", "").strip())
-        else:
-            original_price = price
+        sale_tag = None
+        if price_original and price_current and price_original > price_current:
+            discount = round((1 - price_current / price_original) * 100)
+            sale_tag = f"Скидка {discount}%"
 
-        stock = response.css("span.stock-status span::text").get()
-        in_stock = stock and "в наличии" in stock
-
-        rpc = response.url.split("-")[-1].split(".")[0]
-
-        images = response.css("div.product-gallery img::attr(src)").getall()
-
-        description = response.css('meta[name="description"]::attr(content)').get()
-
-        product_data = {
-            "timestamp": timestamp,
-            "RPC": rpc,
-            "url": response.url,
-            "title": title,
-            "marketing_tags": [],
-            "brand": "",
-            "section": response.url.split("/")[3:-1],
-            "price_data": {
-                "current": price,
-                "original": original_price,
-                "sale_tag": None,
-            },
-            "stock": {
-                "in_stock": in_stock,
-                "count": 0,
-            },
-            "assets": {
-                "main_image": images[0] if images else None,
-                "set_images": images,
-                "view360": [],
-                "video": [],
-            },
-            "metadata": {
-                "__description": description,
-            },
-            "variants": 0,
+        return {
+            "current": price_current,
+            "original": price_original,
+            "sale_tag": sale_tag,
         }
 
-        yield product_data
+    def get_stock_info(self, product):
+        return {
+            "in_stock": bool(product.css(".price-block")),
+            "count": 0,
+        }
+
+    def get_assets(self, product):
+        main_image = product.css(
+            ".images-container link[itemprop=contentUrl]::attr(href)"
+        ).get()
+        set_images = product.css(".images-container img::attr(src)").getall()
+        return {
+            "main_image": main_image,
+            "set_images": set_images,
+            "view360": [],
+            "video": [],
+        }
+
+    def get_metadata(self, response):
+        description = response.css("meta[itemprop=description]::attr(content)").get()
+        return {"__description": description} if description else {}
+
+    def get_variants(self, product):
+        variant_text = product.css(".variants-count::text").get()
+        return (
+            int(variant_text.split()[0])
+            if variant_text and variant_text.split()[0].isdigit()
+            else 0
+        )
+
+    def parse_product(self, response):
+        item = response.meta["item"]
+        metadata = item["metadata"]
+
+        characteristics = response.css(".characteristics div::text").getall()
+        for i in range(0, len(characteristics), 2):
+            key = characteristics[i].strip()
+            value = (
+                characteristics[i + 1].strip() if i + 1 < len(characteristics) else ""
+            )
+            metadata[key] = value
+
+        yield item
